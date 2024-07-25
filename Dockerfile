@@ -1,24 +1,62 @@
-# This is a standard Dockerfile for building a Go app.
-# It is a multi-stage build: the first stage compiles the Go source into a binary, and
-#   the second stage copies only the binary into an alpine base.
+#
+# Build frontend
+#
 
-# -- Stage 1 -- #
-# Compile the app.
-FROM golang:1.12-alpine as builder
-WORKDIR /app
-# The build context is set to the directory where the repo is cloned.
-# This will copy all files in the repo to /app inside the container.
-# If your app requires the build context to be set to a subdirectory inside the repo, you
-#   can use the source_dir app spec option, see: https://www.digitalocean.com/docs/app-platform/references/app-specification-reference/
-COPY . .
-RUN go build -mod=vendor -o bin/hello
+FROM node:20 AS build
 
-# -- Stage 2 -- #
-# Create the final environment with the compiled binary.
-FROM alpine
-# Install any required dependencies.
-RUN apk --no-cache add ca-certificates
-WORKDIR /root/
-# Copy the binary from the builder stage and set it as the default command.
-COPY --from=builder /app/bin/hello /usr/local/bin/
-CMD ["hello"]
+RUN mkdir /frontend
+WORKDIR /frontend
+
+COPY ./frontend/index.html /frontend/index.html
+COPY ./frontend/package.json /frontend/package.json
+COPY ./frontend/public /frontend/public
+
+COPY ./frontend/vite.config.* /frontend/
+COPY ./frontend/tsconfig.jso[n] /frontend/
+COPY ./frontend/tsconfig.node.jso[n] /frontend/
+
+RUN yarn install
+COPY ./frontend/src /frontend/src
+RUN yarn build
+
+
+#
+# Main container
+#
+
+FROM python:3.11
+ENV PYTHONBUFFERED=1
+
+RUN mkdir /backend
+WORKDIR /backend
+
+COPY ./backend/pyproject.toml /backend/pyproject.toml
+
+RUN apt-get update && \
+  apt-get install -y --no-install-recommends \
+    postgresql-client \
+    ffmpeg
+
+RUN \
+  pip install -U pip && \
+  pip install poetry && \
+  poetry config virtualenvs.create false && \
+  poetry install --no-interaction --no-ansi --only main
+
+COPY ./backend/static /backend/static
+COPY ./backend/start.sh /backend/start.sh
+COPY ./backend/reload.sh /backend/reload.sh
+COPY ./backend/demogen /backend/demogen
+COPY ./backend/linker /backend/linker
+COPY ./backend/setup /backend/setup
+
+COPY ./backend/schemas /backend/schemas
+COPY ./backend/ayon_server /backend/ayon_server
+COPY ./backend/api /backend/api
+COPY ./RELEAS[E] /backend/RELEASE
+
+COPY --from=build /frontend/dist/ /frontend
+
+RUN sh -c 'date +%y%m%d%H%M > /backend/BUILD_DATE'
+
+CMD ["/bin/bash", "/backend/start.sh"]
